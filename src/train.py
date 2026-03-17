@@ -95,6 +95,8 @@ def get_starting_elo(team):
 
 # ELO - based on team strength
 elo = {}
+CARRY_OVER = 0.5
+prev_elo = {}
 
 for _, game in regular.iterrows():
 
@@ -105,14 +107,11 @@ for _, game in regular.iterrows():
     key_a = (season, team_a)
     key_b = (season, team_b)
 
-    CARRY_OVER = 0.5
-
-    prev_elo = {}
     for (season, team), rating in elo.items():
         prev_elo[team] = rating  # save end-of-season ratings
 
     rating_a = elo.get(key_a, get_starting_elo(team_a))
-    rating_b = elo.get(key_b, get_starting_elo(team_a))
+    rating_b = elo.get(key_b, get_starting_elo(team_b))
 
     home = game.get("WLoc", "N")
     k_value = 15 if home == "H" else 25 if home == "A" else 20
@@ -141,10 +140,6 @@ team_stats = team_stats.merge(
 team_stats = team_stats.merge(late_form, on=["Season", "TeamID"], how="left")
 team_stats["LateWinPct"] = team_stats["LateWinPct"].fillna(team_stats["WinPct"])
 
-opp_wins = wins.rename(columns={"TeamID": "OppID"})
-opp_losses = losses.rename(columns={"TeamID": "OppID"})
-opp_games = pd.concat([opp_wins, opp_losses])
-
 base_winpct = team_games.groupby(["Season", "TeamID"])["Win"].mean().reset_index()
 base_winpct.columns = ["Season", "OppID", "OppWinPct"]
 
@@ -154,9 +149,7 @@ opp_for_winners.columns = ["Season", "TeamID", "OppID"]
 opp_for_losers = regular[["Season", "LTeamID", "WTeamID"]].copy()
 opp_for_losers.columns = ["Season", "TeamID", "OppID"]
 
-opp_games = opp_games.merge(base_winpct, on=["Season", "OppID"], how="left")
-sos = opp_games.groupby(["Season", "OppID"])["OppWinPct"].mean().reset_index()
-opp_winpct_lookup = base_winpct.copy().rename(columns={"TeamID": "OppID", "WinPct": "OppWinPct"})
+opp_winpct_lookup = base_winpct.copy()
 
 all_opps = pd.concat([opp_for_winners, opp_for_losers], ignore_index=True)
 
@@ -236,7 +229,6 @@ y_train = y[train_mask]
 X_valid = X[valid_mask]
 y_valid = y[valid_mask]
 
-model = LogisticRegression(max_iter=1000)
 model = GradientBoostingClassifier(
     n_estimators=200,
     max_depth=3,
