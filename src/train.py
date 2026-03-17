@@ -3,6 +3,7 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
 from pathlib import Path
+from sklearn.ensemble import GradientBoostingClassifier
 
 virtual_path = Path("./march-madness-26")
 base_path = str(virtual_path.resolve())
@@ -14,6 +15,21 @@ sample = pd.read_csv(base_path + "/data/SampleSubmissionStage1.csv")
 teams = pd.read_csv(base_path + "/data/MTeams.csv")
 
 regular = regular.sort_values(["Season", "DayNum"])
+
+late_wins = regular[["Season","WTeamID"]].rename(columns={"WTeamID":"TeamID"})
+late_wins["Win"] = 1
+late_losses = regular[["Season","LTeamID"]].rename(columns={"LTeamID":"TeamID"})
+late_losses["Win"] = 0
+late_games = pd.concat([late_wins, late_losses]).sort_values(["Season","TeamID"])
+
+late_form = (
+    late_games.groupby(["Season", "TeamID"])
+    .tail(10)
+    .groupby(["Season", "TeamID"])["Win"]
+    .mean()
+    .reset_index()
+    .rename(columns={"Win": "LateWinPct"})
+)
 
 seeds["SeedNum"] = seeds["Seed"].str.extract(r"(\d+)").astype(int)
 seeds = seeds[["Season", "TeamID", "SeedNum"]]
@@ -72,6 +88,11 @@ def update_elo(r_a, r_b, result_a, k=20):
     return n_a, n_b
 
 
+def get_starting_elo(team):
+    prior = prev_elo.get(team, 1500)
+    return 1500 + CARRY_OVER * (prior - 1500)
+
+
 # ELO - based on team strength
 elo = {}
 
@@ -84,10 +105,18 @@ for _, game in regular.iterrows():
     key_a = (season, team_a)
     key_b = (season, team_b)
 
-    rating_a = elo.get(key_a, 1500)
-    rating_b = elo.get(key_b, 1500)
+    CARRY_OVER = 0.5
 
-    new_a, new_b = update_elo(rating_a, rating_b, result_a=1)
+    prev_elo = {}
+    for (season, team), rating in elo.items():
+        prev_elo[team] = rating  # save end-of-season ratings
+
+    rating_a = elo.get(key_a, get_starting_elo(team_a))
+    rating_b = elo.get(key_b, get_starting_elo(team_a))
+
+    home = game.get("WLoc", "N")
+    k_value = 15 if home == "H" else 25 if home == "A" else 20
+    new_a, new_b = update_elo(rating_a, rating_b, result_a=1, k=k_value)
 
     elo[key_a] = new_a
     elo[key_b] = new_b
@@ -108,6 +137,46 @@ team_stats = team_stats.merge(
     on=["Season", "TeamID"],
     how="left"
 )
+
+team_stats = team_stats.merge(late_form, on=["Season", "TeamID"], how="left")
+team_stats["LateWinPct"] = team_stats["LateWinPct"].fillna(team_stats["WinPct"])
+
+opp_wins = wins.rename(columns={"TeamID": "OppID"})
+opp_losses = losses.rename(columns={"TeamID": "OppID"})
+opp_games = pd.concat([opp_wins, opp_losses])
+
+base_winpct = team_games.groupby(["Season", "TeamID"])["Win"].mean().reset_index()
+base_winpct.columns = ["Season", "OppID", "OppWinPct"]
+
+opp_for_winners = regular[["Season", "WTeamID", "LTeamID"]].copy()
+opp_for_winners.columns = ["Season", "TeamID", "OppID"]
+
+opp_for_losers = regular[["Season", "LTeamID", "WTeamID"]].copy()
+opp_for_losers.columns = ["Season", "TeamID", "OppID"]
+
+opp_games = opp_games.merge(base_winpct, on=["Season", "OppID"], how="left")
+sos = opp_games.groupby(["Season", "OppID"])["OppWinPct"].mean().reset_index()
+opp_winpct_lookup = base_winpct.copy().rename(columns={"TeamID": "OppID", "WinPct": "OppWinPct"})
+
+all_opps = pd.concat([opp_for_winners, opp_for_losers], ignore_index=True)
+
+all_opps = all_opps.merge(
+    opp_winpct_lookup,
+    on=["Season", "OppID"],
+    how="left"
+)
+
+sos = (
+    all_opps.groupby(["Season", "TeamID"])["OppWinPct"]
+    .mean()
+    .reset_index()
+    .rename(columns={"OppWinPct": "StrengthOfSchedule"})
+)
+
+print("sos columns:", sos.columns.tolist())  # should now show TeamID
+
+team_stats = team_stats.merge(sos, on=["Season", "TeamID"], how="left")
+team_stats["StrengthOfSchedule"] = team_stats["StrengthOfSchedule"].fillna(0.5)
 
 team_stats["EloRating"] = team_stats["EloRating"].fillna(1500)
 # ELO end
@@ -141,7 +210,9 @@ feature_pairs = [
     ("AvgPointsFor", "PointsForDiff"),
     ("AvgPointsAgainst", "PointsAgainstDiff"),
     ("AvgScoreMargin", "ScoreMarginDiff"),
-    ("EloRating", "EloDiff")
+    ("EloRating", "EloDiff"),
+    ("StrengthOfSchedule", "SoSDiff"),
+    ("LateWinPct", "LateWinPctDiff")
 ]
 
 for base_col, diff_col in feature_pairs:
@@ -166,6 +237,13 @@ X_valid = X[valid_mask]
 y_valid = y[valid_mask]
 
 model = LogisticRegression(max_iter=1000)
+model = GradientBoostingClassifier(
+    n_estimators=200,
+    max_depth=3,
+    learning_rate=0.05,
+    subsample=0.8,
+    random_state=42
+)
 model.fit(X_train, y_train)
 
 valid_preds = model.predict_proba(X_valid)[:, 1]
@@ -215,6 +293,8 @@ team_names_2 = teams.rename(columns={
 
 submission = submission.merge(team_names_1, on="Team1", how="left")
 submission = submission.merge(team_names_2, on="Team2", how="left")
+
+Path(base_path + "/submissions").mkdir(parents=True, exist_ok=True)
 
 out.to_csv(base_path + "/submissions/submission.csv", index=False)
 
