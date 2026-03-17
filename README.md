@@ -31,3 +31,9 @@ Here are the things this code does:
 
 6. Generate debug file with team names
 
+When you run `train.py`, you should be able to see the output in the `submissions` folder
+
+Outputs:
+
+`submission.csv` - All the teams data with the prediction.
+`debug_predictions.json` - Additional file created for frontend consumption.
