@@ -12,7 +12,7 @@ Teams.csv
 SampleSubmissionStage1.csv
 ```
 
-Please download the files from https://www.kaggle.com/datasets/ncaa/ncaa-basketball and store the files in `data` folder.
+You can download the files from https://www.kaggle.com/datasets/ncaa/ncaa-basketball and store the files in `data` folder.
 
 The prediction is very Simple Logistic Regression Model right now with Elo Rating but I plan to add more to this.
 
