@@ -10,7 +10,7 @@ base_path = str(virtual_path.resolve())
 seeds = pd.read_csv(base_path + "/data/MNCAATourneySeeds.csv")
 regular = pd.read_csv(base_path + "/data/MRegularSeasonCompactResults.csv")
 tourney = pd.read_csv(base_path + "/data/MNCAATourneyCompactResults.csv")
-sample = pd.read_csv(base_path + "/data/SampleSubmissionStage1.csv")
+sample = pd.read_csv(base_path + "/data/SampleSubmissionStage2.csv")
 teams = pd.read_csv(base_path + "/data/MTeams.csv")
 
 regular = regular.sort_values(["Season", "DayNum"])
@@ -287,10 +287,10 @@ submission = submission.merge(team_names_2, on="Team2", how="left")
 
 Path(base_path + "/submissions").mkdir(parents=True, exist_ok=True)
 
-out.to_csv(base_path + "/submissions/submission.csv", index=False)
+# out.to_csv(base_path + "/submissions/submission.csv", index=False)
 
 # With team names
-debug = submission[[
+debug = submission[submission["Season"] == 2026][[
     "Season",
     "Team1Name",
     "Team2Name",
@@ -299,6 +299,12 @@ debug = submission[[
 
 debug.to_json(base_path + "/submissions/debug_predictions.json", orient="records", indent=2)
 # End team name
+
+out = sample[["ID"]].copy()
+out = out.merge(submission[["ID", "Pred"]], on="ID", how="left")
+out["Pred"] = out["Pred"].fillna(0.5)
+print("Final rows:", out.shape[0])  # should be 132133
+out.to_csv(base_path + "/submissions/submission.csv", index=False)
 
 
 print("Saved submission.csv")
