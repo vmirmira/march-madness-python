@@ -1,6 +1,5 @@
 import pandas as pd
 
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
 from pathlib import Path
 from sklearn.ensemble import GradientBoostingClassifier
